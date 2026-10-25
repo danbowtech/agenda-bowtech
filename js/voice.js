@@ -25,7 +25,10 @@ export function listen({ onPartial } = {}) {
   r.continuous = false;
   let finals = null;
   let lastPartial = '';
+  let finish;
   const result = new Promise((resolve, reject) => {
+    let settled = false;
+    finish = () => { if (!settled) { settled = true; resolve(finals || (lastPartial ? [lastPartial] : [])); } };
     r.onresult = e => {
       let partial = '';
       for (let i = e.resultIndex; i < e.results.length; i++) {
@@ -40,10 +43,17 @@ export function listen({ onPartial } = {}) {
       if (e.error === 'aborted') return;
       reject(new Error(ERRORS[e.error] || `Recunoașterea vocii a eșuat (${e.error}).`));
     };
-    r.onend = () => resolve(finals || (lastPartial ? [lastPartial] : []));
+    r.onend = () => finish();
   });
   try { r.start(); } catch (e) { return { result: Promise.reject(e), stop() {} }; }
-  return { result, stop: () => { try { r.stop(); } catch {} } };
+  return {
+    result,
+    // unele telefoane nu se opresc imediat: după 2 secunde folosim ce s-a auzit până atunci
+    stop: () => {
+      try { r.stop(); } catch {}
+      setTimeout(() => { try { r.abort(); } catch {} finish(); }, 2000);
+    },
+  };
 }
 
 let voices = [];

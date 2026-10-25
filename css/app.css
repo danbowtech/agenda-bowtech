@@ -339,7 +339,10 @@ label.check { display: flex; gap: 10px; align-items: center; color: var(--text);
 .v-body:empty { display: none; }
 .v-body .answer { font-size: 1.1rem; }
 .v-body .list { margin: 10px 0; }
-.v-type { margin-top: 16px; }
+.v-type { display: flex; flex-direction: column; gap: 10px; margin-top: 16px; }
+.v-type input { min-height: 52px; font-size: 17px; }
+.v-type .btn.big { min-height: 58px; font-size: 1.15rem; }
+.v-type .btn .ic { width: 22px; height: 22px; }
 .confirm { padding: 14px; border-radius: 14px; background: var(--surface-2); border: 1px solid var(--line); margin-top: 8px; }
 .confirm h3 { margin: 0 0 6px; }
 .confirm label { margin-top: 10px; }

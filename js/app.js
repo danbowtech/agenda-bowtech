@@ -1550,22 +1550,24 @@ function voiceCtx() {
 function startVoice() {
   flushEdits();
   let rec = null;
+  let listening = false;
   const m = modal(`
     <div class="voice">
-      <button class="mic-big" data-act="v-listen" aria-label="Ascultă din nou">${icon('mic')}</button>
+      <button class="mic-big" data-act="v-listen" aria-label="Microfon">${icon('mic')}</button>
       <p class="v-status" aria-live="polite"></p>
       <p class="v-text"></p>
       <div class="v-body"></div>
-      <form class="v-type addrow">
+      <form class="v-type">
         <input placeholder="sau scrie comanda aici" autocomplete="off" enterkeyhint="send">
-        <button class="btn" type="submit">Trimite</button>
+        <button class="btn primary big" type="submit">${icon('check')} Trimite</button>
       </form>
       <button class="btn ghost" data-act="v-close">Închide</button>
     </div>`, {
     cls: 'sheet',
-    onClose: () => { rec?.stop(); voice.stopSpeaking(); },
+    onClose: () => { if (rec) rec.ignored = true; rec?.stop(); voice.stopSpeaking(); },
     actions: {
-      'v-listen': () => listenNow(),
+      // cât timp ascultă, microfonul înseamnă „am terminat de vorbit”
+      'v-listen': () => (listening ? finishListening() : listenNow()),
       'v-close': () => m.close(),
       'v-help': async () => { await m.close(); go('#/ajutor'); },
     },
@@ -1573,13 +1575,31 @@ function startVoice() {
   const status = t => { m.$('.v-status').textContent = t; };
   const body = h => { m.$('.v-body').innerHTML = h; };
 
+  function setListening(on) {
+    listening = on;
+    m.$('.mic-big').classList.toggle('listening', on);
+    m.$('.mic-big').setAttribute('aria-label', on ? 'Am terminat de vorbit' : 'Ascultă din nou');
+  }
+
+  function finishListening() {
+    status('Mă gândesc…');
+    rec?.stop();
+  }
+
   m.$('.v-type').onsubmit = e => {
     e.preventDefault();
     const inp = m.$('.v-type input');
     const t = inp.value.trim();
-    if (!t) return;
-    rec?.stop();
+    if (!t) {
+      // „Trimite” fără text: trimite ce ai spus până acum
+      if (listening) finishListening();
+      else status('Apasă pe microfon și vorbește, sau scrie comanda în căsuță.');
+      return;
+    }
+    if (rec) { rec.ignored = true; rec.stop(); }
+    setListening(false);
     inp.value = '';
+    inp.blur();
     m.$('.v-text').textContent = `„${t}”`;
     handle([t]);
   };
@@ -1593,18 +1613,18 @@ function startVoice() {
       m.$('.mic-big').disabled = true;
       return;
     }
-    m.$('.mic-big').classList.add('listening');
-    status('Te ascult…');
-    rec = voice.listen({ onPartial: t => { m.$('.v-text').textContent = t; } });
-    rec.result.then(alts => {
-      if (m.closed) return;
-      m.$('.mic-big').classList.remove('listening');
+    setListening(true);
+    status('Te ascult… Când termini, apasă Trimite.');
+    const my = rec = voice.listen({ onPartial: t => { if (!my.ignored) m.$('.v-text').textContent = t; } });
+    my.result.then(alts => {
+      if (m.closed || my.ignored) return;
+      setListening(false);
       if (!alts.length) { status('Nu am auzit nimic. Apasă pe microfon și vorbește.'); return; }
       m.$('.v-text').textContent = `„${alts[0]}”`;
       handle(alts);
     }).catch(e => {
-      if (m.closed) return;
-      m.$('.mic-big').classList.remove('listening');
+      if (m.closed || my.ignored) return;
+      setListening(false);
       status(e.message);
     });
   }

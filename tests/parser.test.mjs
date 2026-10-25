@@ -276,3 +276,21 @@ test('comenzile vechi nu devin cronometru', () => {
   assert.equal(tp('Ce ședințe am mâine?').type, 'query');
   for (const e of EXAMPLES) assert.notEqual(tp(e).type, 'unknown', e);
 });
+
+test('întrebări pe zi, săptămână și lună', () => {
+  const q = t => { const r = p(t); assert.equal(r.type, 'query', t); return [r.from, r.to, r.label || '']; };
+  assert.deepEqual(q('ce programări am azi?'), ['2026-10-27', '2026-10-28', '']);
+  assert.deepEqual(q('ce programări am miercuri?'), ['2026-10-28', '2026-10-29', '']);
+  assert.deepEqual(q('ce programări am luni?'), ['2026-11-02', '2026-11-03', '']);
+  assert.deepEqual(q('ce programări am săptămâna asta?'), ['2026-10-26', '2026-11-02', 'săptămâna aceasta']);
+  assert.deepEqual(q('ce programări am avut săptămâna trecută?'), ['2026-10-19', '2026-10-26', 'săptămâna trecută']);
+  assert.deepEqual(q('ce programări am luna asta?'), ['2026-10-01', '2026-11-01', 'luna aceasta']);
+  assert.deepEqual(q('câte ședințe am luna viitoare'), ['2026-11-01', '2026-12-01', 'luna viitoare']);
+  assert.deepEqual(q('ce programări am avut luna trecută?'), ['2026-09-01', '2026-10-01', 'luna trecută']);
+  assert.deepEqual(q('ce programări am în noiembrie?'), ['2026-11-01', '2026-12-01', 'în noiembrie']);
+  assert.deepEqual(q('ce programări am avut în septembrie'), ['2026-09-01', '2026-10-01', 'în septembrie']);
+  assert.deepEqual(q('ce programări am în ianuarie'), ['2027-01-01', '2027-02-01', 'în ianuarie 2027']);
+  // o dată anume rămâne o zi, nu o lună
+  assert.deepEqual(q('ce am pe 5 noiembrie'), ['2026-11-05', '2026-11-06', '']);
+  assert.equal(p('programează-o pe Maria Popescu pe 5 noiembrie la 10').date, '2026-11-05');
+});

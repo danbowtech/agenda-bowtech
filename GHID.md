@@ -148,7 +148,10 @@ Apasă microfonul din mijloc și vorbește. Aplicația îți arată ce a înțel
 | | „Programează-o pe Ana pe 5 noiembrie la 9 dimineața” |
 | | „Programează următoarea ședință pentru Ana” (alege singură ziua) |
 | Întrebări | „Ce ședințe am mâine?” |
-| | „Ce programări am săptămâna aceasta?” |
+| | „Ce programări am azi?” / „… miercuri?” (orice zi) |
+| | „Ce programări am săptămâna asta?” / „… săptămâna viitoare?” |
+| | „Ce programări am luna asta?” / „… luna viitoare?” / „… în noiembrie?” |
+| | „Ce programări am avut săptămâna trecută?” / „… luna trecută?” |
 | | „Cine vine vineri?” |
 | | „Când vine Maria?” |
 | Notițe | „Notează la Ion: durerea de spate s-a ameliorat” |

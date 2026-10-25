@@ -167,13 +167,46 @@ function matchDate(T, i, now, opts) {
   return null;
 }
 
+const PAST_WORDS = new Set(['trecuta', 'trecut', 'anterioara', 'anterior', 'dinainte']);
+const MONTH_FULL = ['ianuarie', 'februarie', 'martie', 'aprilie', 'mai', 'iunie', 'iulie', 'august', 'septembrie',
+  'octombrie', 'noiembrie', 'decembrie'];
+
+// Perioade: „săptămâna asta / viitoare / trecută”, „luna asta / viitoare / trecută”, „în noiembrie”
 function matchRange(T, i, now) {
   let j = i, prep = null;
   if (DATE_PREPS.has(T[j]?.t)) { prep = T[j].t; j++; }
-  if (T[j]?.t !== 'saptamana') return null;
-  const mon = startOfWeek(now);
-  if (THIS_WORDS.has(T[j + 1]?.t)) return { kind: 'range', prep, start: i, end: j + 2, from: dateKey(mon), to: dateKey(addDays(mon, 7)), label: 'săptămâna aceasta' };
-  if (NEXT_WORDS.has(T[j + 1]?.t)) return { kind: 'range', prep, start: i, end: j + 2, from: dateKey(addDays(mon, 7)), to: dateKey(addDays(mon, 14)), label: 'săptămâna viitoare' };
+  const w = T[j]?.t, nx = T[j + 1]?.t;
+  const range = (from, to, label, end = j + 2) => ({ kind: 'range', prep, start: i, end, from: dateKey(from), to: dateKey(to), label });
+
+  if (w === 'saptamana') {
+    const mon = startOfWeek(now);
+    if (THIS_WORDS.has(nx)) return range(mon, addDays(mon, 7), 'săptămâna aceasta');
+    if (NEXT_WORDS.has(nx)) return range(addDays(mon, 7), addDays(mon, 14), 'săptămâna viitoare');
+    if (PAST_WORDS.has(nx)) return range(addDays(mon, -7), mon, 'săptămâna trecută');
+    return null;
+  }
+
+  if (w === 'luna') {
+    const m = new Date(now.getFullYear(), now.getMonth(), 1);
+    const shift = k => new Date(m.getFullYear(), m.getMonth() + k, 1);
+    if (THIS_WORDS.has(nx)) return range(m, shift(1), 'luna aceasta');
+    if (NEXT_WORDS.has(nx)) return range(shift(1), shift(2), 'luna viitoare');
+    if (PAST_WORDS.has(nx)) return range(shift(-1), m, 'luna trecută');
+    return null;
+  }
+
+  // numele lunii, fără o zi înainte („5 noiembrie” e o dată, nu o lună întreagă)
+  const mi = MONTH_FULL.indexOf(w);
+  if (mi >= 0 && T[i - 1]?.n == null && (w !== 'mai' || prep)) {
+    let year = now.getFullYear();
+    let end = j + 1;
+    if (T[end]?.n >= 2000 && T[end]?.n < 2100) { year = T[end].n; end++; }
+    // fără an: luna cea mai apropiată (cu 6 luni înapoi sau înainte)
+    else if (mi - now.getMonth() > 6) year--;
+    else if (now.getMonth() - mi > 5) year++;
+    const y = year !== now.getFullYear() ? ` ${year}` : '';
+    return range(new Date(year, mi, 1), new Date(year, mi + 1, 1), `în ${MONTH_FULL[mi]}${y}`, end);
+  }
   return null;
 }
 
@@ -712,6 +745,7 @@ export const EXAMPLES = [
   'Programează următoarea ședință pentru Ana',
   'Ce ședințe am mâine?',
   'Ce programări am săptămâna aceasta?',
+  'Ce programări am luna asta?',
   'Când vine Maria?',
   'Notează la Ion: durerea de spate s-a ameliorat',
   'Notează la Maria reacții: a simțit căldură în zona lombară',

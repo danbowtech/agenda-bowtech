@@ -1726,7 +1726,8 @@ VIEWS.ajutor = (id, q) => {
       ${ex(['Programează-o pe Maria Popescu marți la ora 10', 'Programează-l pe Ion mâine la trei și jumătate', 'Programează-o pe Ana pe 5 noiembrie la 9 dimineața', 'Programează următoarea ședință pentru Ana'])}
       <p class="small muted">Dacă nu spui ziua, se propune ziua obișnuită după ultima ședință. Orele de la 1 la 7 sunt considerate după-amiaza („la 3” = 15:00); spune „dimineața” dacă e altfel.</p>
       <h3>Întrebări</h3>
-      ${ex(['Ce ședințe am mâine?', 'Ce programări am săptămâna aceasta?', 'Cine vine vineri?', 'Când vine Maria?'])}
+      ${ex(['Ce programări am azi?', 'Ce programări am miercuri?', 'Ce programări am săptămâna asta?', 'Ce programări am luna asta?', 'Ce programări am avut luna trecută?', 'Ce programări am în noiembrie?', 'Cine vine vineri?', 'Când vine Maria?'])}
+      <p class="small muted">Merge cu orice zi („luni”, „marțea viitoare”, „pe 12 noiembrie”), cu „săptămâna asta / viitoare / trecută” și cu „luna asta / viitoare / trecută” sau numele lunii.</p>
       <h3>Notițe</h3>
       ${ex(['Notează la Ion: durerea de spate s-a ameliorat', 'Notează la Maria reacții: a simțit căldură în zona lombară', 'Notează la Ana starea după: se simte relaxată', 'Notează la Ion proceduri: genunchi'])}
       <p class="small muted">Nota merge la ședința de azi a clientului (sau la ultima lui ședință). Cuvintele „reacții”, „starea după” și „proceduri” aleg câmpul; altfel merge la „Alte notițe”.</p>
@@ -2128,12 +2129,26 @@ const INTENTS = {
         ? `${capFirst(when)} ${past ? 'ai avut' : 'ai'} ${plural(list.length, 'ședință', 'ședințe')}: ${list.map(s => `la ${fmtTime(fromLocal(s.start))} ${client(s.clientId).name}`).join(', ')}.`
         : `${capFirst(when)} nu ${past ? 'ai avut' : 'ai'} nicio ședință.`;
     } else {
-      text = list.length ? `${capFirst(r.label)} ai ${plural(list.length, 'ședință', 'ședințe')}.` : `${capFirst(r.label)} nu ai nicio ședință.`;
+      const todayK = dateKey(new Date());
+      const past = r.to <= todayK;
+      const verb = past ? 'ai avut' : 'ai';
+      text = list.length
+        ? `${capFirst(r.label)} ${verb} ${plural(list.length, 'ședință', 'ședințe')}.`
+        : `${capFirst(r.label)} nu ${verb} nicio ședință.`;
+      // perioada în curs: câte mai urmează
+      if (list.length && r.from <= todayK && todayK < r.to) {
+        const ahead = list.filter(s => s.start >= toLocal(new Date())).length;
+        if (ahead < list.length) text += ahead ? ` De acum încolo mai ${ahead === 1 ? 'ai una' : `ai ${plural(ahead, 'ședință', 'ședințe')}`}.` : list.length === 1 ? ' A trecut deja.' : ' Toate au trecut deja.';
+      }
     }
+    const MAX = 40;
+    const todayK = dateKey(new Date());
+    const openDay = !r.single && r.from <= todayK && todayK < r.to ? todayK : r.from;
     v.say(text);
     v.body(`<p class="answer">${esc(text)}</p>
-      ${list.length ? `<div class="list">${list.slice(0, 12).map(s => `<a class="wrow" href="#/sedinta/${s.id}" data-nav><b>${r.single ? fmtTime(fromLocal(s.start)) : fmtDateShort(fromLocal(s.start)) + ' ' + fmtTime(fromLocal(s.start))}</b><span>${esc(client(s.clientId).name)}</span></a>`).join('')}</div>` : ''}
-      <button class="btn" data-go="#/agenda?d=${r.from}&m=${r.single ? 'zi' : 'sapt'}">${icon('calendar')} Deschide agenda</button>`);
+      ${list.length ? `<div class="list">${list.slice(0, MAX).map(s => `<a class="wrow" href="#/sedinta/${s.id}" data-nav><b>${r.single ? fmtTime(fromLocal(s.start)) : fmtDateShort(fromLocal(s.start)) + ' ' + fmtTime(fromLocal(s.start))}</b><span>${esc(client(s.clientId).name)}</span></a>`).join('')}</div>` : ''}
+      ${list.length > MAX ? `<p class="small muted">și încă ${list.length - MAX}…</p>` : ''}
+      <button class="btn" data-go="#/agenda?d=${openDay}&m=${r.single ? 'zi' : 'sapt'}">${icon('calendar')} Deschide agenda</button>`);
     bindNav(v);
   },
 

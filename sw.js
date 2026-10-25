@@ -1,7 +1,7 @@
 // Service worker: aplicația merge și fără internet, iar notificările deschid ședința.
 // Când modifici fișierele aplicației, crește numărul versiunii de mai jos.
 
-const VERSION = 'agenda-v3';
+const VERSION = 'agenda-v4';
 const FILES = [
   './',
   'index.html',

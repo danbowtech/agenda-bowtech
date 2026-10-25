@@ -2,7 +2,8 @@
 //
 // db = {
 //   v: 1,
-//   clients:  { [id]: { id, name, phone, email, birth, reason, notes, createdAt, updatedAt, deleted? } },
+//   clients:  { [id]: { id, name, phone, email, birth, reason, notes, timers?, createdAt, updatedAt, deleted? } },
+//             timers = { [procedură]: secunde } – timpi de pauză doar pentru acest client
 //   sessions: { [id]: { id, clientId, start: 'YYYY-MM-DDTHH:MM', duration, status,
 //                        procedures: [], reactions, after, notes, nextId, updatedAt, deleted? } },
 //   settings: { ..., updatedAt }
@@ -48,6 +49,11 @@ export function defaultSettings() {
     speak: true,
     autoLockMin: 15,
     procedures: [...DEFAULT_PROCEDURES],
+    timerDefault: 120,      // secunde de pauză după un pas, dacă procedura nu are timp propriu
+    timers: {},             // { [procedură]: secunde } – timpii generali pe procedură
+    alarmSound: 'bol',      // 'bol' | 'clopotel'
+    alarmVolume: 40,        // 0–100
+    alarmVibrate: true,
     updatedAt: 0,
   };
 }
@@ -165,4 +171,18 @@ export function fingerprint(db) {
 
 export function todayKey(now = new Date()) {
   return dateKey(now);
+}
+
+// Cât durează pauza după o procedură, pentru un client (sau în general dacă client lipsește).
+// source: 'client' (timp personalizat), 'general' (timpul procedurii) sau 'default' (timpul general)
+export function procTime(settings, client, proc) {
+  const c = client?.timers?.[proc];
+  if (c > 0) return { seconds: c, source: 'client' };
+  const g = settings.timers?.[proc];
+  if (g > 0) return { seconds: g, source: 'general' };
+  return { seconds: settings.timerDefault || 120, source: 'default' };
+}
+
+export function generalTime(settings, proc) {
+  return procTime(settings, null, proc).seconds;
 }

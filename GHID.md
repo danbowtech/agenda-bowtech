@@ -124,6 +124,19 @@ Apasă pe o ședință ca s-o deschizi. Acolo:
 
 Totul se salvează automat, nu trebuie să apeși „Salvează”.
 
+### Cronometrul pașilor
+
+În fiecare ședință, la **Pași și pauze**, ai lista procedurilor. Pentru fiecare pas:
+
+- bifezi pasul când l-ai făcut;
+- apeși **▶** ca să pornești pauza de după pas. Pasul se bifează singur. Jos apare o bară cu numărătoarea inversă, de unde poți pune pe pauză, adăuga sau scădea 30 de secunde, ori opri;
+- la final se aude un **sunet blând** (bol tibetan sau clopoțel, la alegere) și telefonul vibrează scurt. Cât timp merge cronometrul, ecranul rămâne aprins.
+
+**Timpii:**
+
+- **Timpul general** al fiecărei proceduri se schimbă din **Setări → Lista de proceduri** (apeși pe timpul de lângă procedură). Procedurile fără timp propriu folosesc **pauza obișnuită** din **Setări → Cronometru și sunet** (la început, 2 minute).
+- **Doar pentru un client** poți pune alt timp, mai lung sau mai scurt: în ședința lui apeși pe timpul de lângă pas, sau din fișa clientului → **Pauză personalizată**. Timpii personalizați apar cu portocaliu. Ceilalți clienți nu sunt afectați.
+
 ### Comenzi vocale
 
 Apasă microfonul din mijloc și vorbește. Aplicația îți arată ce a înțeles și **nu schimbă nimic până nu apeși Confirmă**. După fiecare modificare apare butonul **Anulează**, dacă te-ai răzgândit.
@@ -135,7 +148,10 @@ Apasă microfonul din mijloc și vorbește. Aplicația îți arată ce a înțel
 | | „Programează-o pe Ana pe 5 noiembrie la 9 dimineața” |
 | | „Programează următoarea ședință pentru Ana” (alege singură ziua) |
 | Întrebări | „Ce ședințe am mâine?” |
-| | „Ce programări am săptămâna aceasta?” |
+| | „Ce programări am azi?” / „… miercuri?” (orice zi) |
+| | „Ce programări am săptămâna asta?” / „… săptămâna viitoare?” |
+| | „Ce programări am luna asta?” / „… luna viitoare?” / „… în noiembrie?” |
+| | „Ce programări am avut săptămâna trecută?” / „… luna trecută?” |
 | | „Cine vine vineri?” |
 | | „Când vine Maria?” |
 | Notițe | „Notează la Ion: durerea de spate s-a ameliorat” |
@@ -146,13 +162,23 @@ Apasă microfonul din mijloc și vorbește. Aplicația îți arată ce a înțel
 | | „Amână ședința lui Ion cu o zi” |
 | Anulări | „Anulează ședința de mâine a lui Ion” |
 | Fișa clientului | „Deschide fișa Mariei” |
+| Cronometru | „Pornește cronometrul pentru gât” |
+| | „Start genunchi” |
+| | „Oprește cronometrul” |
+| Timp doar pentru un client | „Setează la Maria pentru gât 3 minute” |
+| | „La Ion pentru coccis un minut și jumătate” |
+| | „La Maria toate procedurile 3 minute” |
+| Înapoi la timpul general | „La Ion pentru coccis timpul obișnuit” |
+| Timp pentru toți | „Timpul general pentru umăr să fie 2 minute” |
+| Întrebare | „Cât timp are Maria la gât?” |
 
 Bine de știut:
 
 - „La 3”, „la 5” etc. înseamnă după-amiaza (15:00, 17:00). Pentru dimineață spune „la 7 dimineața”.
 - Notițele merg la ședința de azi a clientului (sau la ultima lui ședință). Dacă nu are nicio ședință, merg în fișa lui.
 - Recunoașterea vocii are nevoie de internet. Restul aplicației merge și fără internet.
-- Dacă microfonul nu merge, poți scrie comanda în căsuța de sub microfon.
+- Când termini de vorbit, apasă **Trimite** (sau butonul mare cu microfonul). Dacă microfonul nu merge, poți scrie comanda în căsuța de sub microfon.
+- La comenzile pentru cronometru fără numele clientului se folosește clientul ședinței deschise (sau al ședinței care are loc acum).
 
 ### Siguranța datelor
 

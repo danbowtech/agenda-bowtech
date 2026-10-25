@@ -177,3 +177,120 @@ test('necunoscut și ajutor', () => {
 test('toate exemplele din ajutor sunt înțelese', () => {
   for (const e of EXAMPLES) assert.notEqual(p(e).type, 'unknown', e);
 });
+
+// ---------- cronometru ----------
+import { DEFAULT_PROCEDURES } from '../js/model.js';
+const tctx = { ...ctx, procedures: DEFAULT_PROCEDURES };
+const tp = t => parseCommand(t, tctx);
+const GAT = 'Gât (BRM3)';
+
+test('cronometru: timp personalizat pentru un client', () => {
+  let r = tp('Setează la Maria Popescu pentru gât 3 minute');
+  assert.equal(r.type, 'timer');
+  assert.equal(r.action, 'set');
+  assert.deepEqual(r.exact, ['maria']);
+  assert.deepEqual(r.procs, [GAT]);
+  assert.equal(r.seconds, 180);
+  r = tp('Pune la Ion Ionescu timpul pentru coccis 90 de secunde');
+  assert.deepEqual(r.exact, ['ion']);
+  assert.deepEqual(r.procs, ['Coccis']);
+  assert.equal(r.seconds, 90);
+  r = tp('La Ana, la rinichi, două minute și jumătate');
+  assert.equal(r.action, 'set');
+  assert.deepEqual(r.exact, ['ana']);
+  assert.deepEqual(r.procs, ['Rinichi']);
+  assert.equal(r.seconds, 150);
+  r = tp('Timpul pentru spate jos la Maria Popescu să fie un minut și 30 de secunde');
+  assert.deepEqual(r.procs, ['Relaxare de bază – spate jos (BRM1)']);
+  assert.equal(r.seconds, 90);
+  r = tp('Maria Popescu gâtul 4 minute');
+  assert.deepEqual(r.exact, ['maria']);
+  assert.deepEqual(r.procs, [GAT]);
+  assert.equal(r.seconds, 240);
+  r = tp('setează pentru Ion la b r m 1 trei minute');
+  assert.deepEqual(r.procs, ['Relaxare de bază – spate jos (BRM1)']);
+  assert.equal(r.seconds, 180);
+  r = tp('la Ion pentru genunchi 2:30');
+  assert.equal(r.seconds, 150);
+  assert.deepEqual(r.procs, ['Genunchi']);
+  r = tp('la Maria Popescu toate procedurile 3 minute');
+  assert.equal(r.allProcs, true);
+  assert.equal(r.seconds, 180);
+});
+
+test('cronometru: timp general', () => {
+  let r = tp('Setează timpul general pentru umăr la 4 minute');
+  assert.equal(r.action, 'set');
+  assert.equal(r.general, true);
+  assert.deepEqual(r.procs, ['Umăr']);
+  assert.equal(r.seconds, 240);
+  r = tp('pentru toți clienții timpul la gleznă să fie jumătate de minut');
+  assert.equal(r.general, true);
+  assert.equal(r.seconds, 30);
+  r = tp('Timpul pentru umăr să fie 2 minute și jumătate');
+  assert.equal(r.general, false);
+  assert.deepEqual(r.exact, []);
+  assert.equal(r.seconds, 150);
+});
+
+test('cronometru: revenire la timpul obișnuit', () => {
+  const r = tp('La Ion pentru coccis timpul obișnuit');
+  assert.equal(r.action, 'reset');
+  assert.deepEqual(r.exact, ['ion']);
+  assert.deepEqual(r.procs, ['Coccis']);
+  assert.equal(tp('șterge timpul personalizat de la gât pentru Maria Popescu').action, 'reset');
+});
+
+test('cronometru: pornire, oprire, întrebare', () => {
+  let r = tp('Pornește cronometrul pentru gât');
+  assert.equal(r.action, 'start');
+  assert.deepEqual(r.procs, [GAT]);
+  r = tp('start genunchi');
+  assert.equal(r.action, 'start');
+  assert.deepEqual(r.procs, ['Genunchi']);
+  r = tp('pornește pauza de 3 minute pentru umăr');
+  assert.equal(r.seconds, 180);
+  r = tp('pornește cronometrul');
+  assert.equal(r.action, 'start');
+  assert.deepEqual(r.procs, []);
+  assert.equal(tp('Oprește cronometrul').action, 'stop');
+  assert.equal(tp('stop').action, 'stop');
+  assert.equal(tp('anulează cronometrul').action, 'stop');
+  r = tp('cât timp are Maria Popescu la gât');
+  assert.equal(r.action, 'query');
+  assert.deepEqual(r.exact, ['maria']);
+});
+
+test('cronometru: procedură ambiguă', () => {
+  const r = tp('la Ion pentru spate 3 minute');
+  assert.deepEqual(r.procs, []);
+  assert.equal(r.procChoices.length, 2);
+});
+
+test('comenzile vechi nu devin cronometru', () => {
+  assert.equal(tp('Programează-o pe Maria Popescu marți la ora 10').type, 'schedule');
+  assert.equal(tp('programează pe Ion mâine la 10 pentru 60 de minute').type, 'schedule');
+  assert.equal(tp('Mută ședința de la ora 15 pe joi').type, 'move');
+  assert.equal(tp('notează la Ion că a avut nevoie de mai mult timp').type, 'note');
+  assert.equal(tp('Anulează ședința de mâine a lui Ion').type, 'cancel');
+  assert.equal(tp('Ce ședințe am mâine?').type, 'query');
+  for (const e of EXAMPLES) assert.notEqual(tp(e).type, 'unknown', e);
+});
+
+test('întrebări pe zi, săptămână și lună', () => {
+  const q = t => { const r = p(t); assert.equal(r.type, 'query', t); return [r.from, r.to, r.label || '']; };
+  assert.deepEqual(q('ce programări am azi?'), ['2026-10-27', '2026-10-28', '']);
+  assert.deepEqual(q('ce programări am miercuri?'), ['2026-10-28', '2026-10-29', '']);
+  assert.deepEqual(q('ce programări am luni?'), ['2026-11-02', '2026-11-03', '']);
+  assert.deepEqual(q('ce programări am săptămâna asta?'), ['2026-10-26', '2026-11-02', 'săptămâna aceasta']);
+  assert.deepEqual(q('ce programări am avut săptămâna trecută?'), ['2026-10-19', '2026-10-26', 'săptămâna trecută']);
+  assert.deepEqual(q('ce programări am luna asta?'), ['2026-10-01', '2026-11-01', 'luna aceasta']);
+  assert.deepEqual(q('câte ședințe am luna viitoare'), ['2026-11-01', '2026-12-01', 'luna viitoare']);
+  assert.deepEqual(q('ce programări am avut luna trecută?'), ['2026-09-01', '2026-10-01', 'luna trecută']);
+  assert.deepEqual(q('ce programări am în noiembrie?'), ['2026-11-01', '2026-12-01', 'în noiembrie']);
+  assert.deepEqual(q('ce programări am avut în septembrie'), ['2026-09-01', '2026-10-01', 'în septembrie']);
+  assert.deepEqual(q('ce programări am în ianuarie'), ['2027-01-01', '2027-02-01', 'în ianuarie 2027']);
+  // o dată anume rămâne o zi, nu o lună
+  assert.deepEqual(q('ce am pe 5 noiembrie'), ['2026-11-05', '2026-11-06', '']);
+  assert.equal(p('programează-o pe Maria Popescu pe 5 noiembrie la 10').date, '2026-11-05');
+});

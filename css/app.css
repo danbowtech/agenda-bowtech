@@ -339,7 +339,10 @@ label.check { display: flex; gap: 10px; align-items: center; color: var(--text);
 .v-body:empty { display: none; }
 .v-body .answer { font-size: 1.1rem; }
 .v-body .list { margin: 10px 0; }
-.v-type { margin-top: 16px; }
+.v-type { display: flex; flex-direction: column; gap: 10px; margin-top: 16px; }
+.v-type input { min-height: 52px; font-size: 17px; }
+.v-type .btn.big { min-height: 58px; font-size: 1.15rem; }
+.v-type .btn .ic { width: 22px; height: 22px; }
 .confirm { padding: 14px; border-radius: 14px; background: var(--surface-2); border: 1px solid var(--line); margin-top: 8px; }
 .confirm h3 { margin: 0 0 6px; }
 .confirm label { margin-top: 10px; }
@@ -361,3 +364,50 @@ label.check { display: flex; gap: 10px; align-items: center; color: var(--text);
   .row3 { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
   .row3 > :first-child { grid-column: 1 / -1; }
 }
+
+/* ---------- pașii ședinței și cronometrul ---------- */
+.ic.inl { width: 14px; height: 14px; vertical-align: -2px; }
+.steps-list { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; }
+.step { display: flex; align-items: center; gap: 6px; padding: 4px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface-2); }
+.step.on { border-color: color-mix(in srgb, var(--primary) 45%, var(--line)); }
+.step.running { outline: 2px solid var(--accent); }
+.step button { border: 0; background: none; color: inherit; font: inherit; cursor: pointer; }
+.step .tick { width: 36px; height: 36px; flex: none; border-radius: 10px; border: 2px solid var(--line); display: grid; place-items: center; color: transparent; }
+.step.on .tick { background: var(--primary); border-color: var(--primary); color: var(--primary-ink); }
+.step .tick .ic { width: 18px; height: 18px; stroke-width: 3; }
+.step .sname { flex: 1; min-width: 0; text-align: left; padding: 8px 4px; font-size: .95rem; }
+.step.on .sname { font-weight: 600; }
+.step .dur { min-width: 56px; padding: 8px 6px; border-radius: 10px; font-variant-numeric: tabular-nums; font-weight: 700; color: var(--muted); }
+.step .dur.personal { color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, transparent); }
+.step .play { width: 44px; height: 44px; flex: none; border-radius: 50%; display: grid; place-items: center; background: var(--primary) !important; color: var(--primary-ink) !important; }
+.step .play .ic { width: 18px; height: 18px; fill: currentColor; }
+
+body.has-timer .view { padding-bottom: calc(240px + env(safe-area-inset-bottom)); }
+.tbar {
+  position: fixed; left: 8px; right: 8px; bottom: calc(80px + env(safe-area-inset-bottom)); z-index: 20;
+  max-width: 624px; margin: 0 auto; overflow: hidden;
+  background: var(--surface); border: 1px solid var(--line); border-radius: 18px;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, .18);
+}
+.tprog { height: 4px; background: var(--primary-soft); }
+.tprog i { display: block; height: 100%; width: 0; background: var(--primary); transition: width .25s linear; }
+.tbar.paused .tprog i { background: var(--muted); }
+.tbar.done { border-color: var(--ok); }
+.tbar.done .tprog i { background: var(--ok); }
+.trow { display: flex; align-items: center; gap: 12px; padding: 10px 14px 4px; }
+.tinfo { flex: 1; min-width: 0; }
+.tinfo b { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tinfo small { color: var(--muted); }
+.ttime { font-size: 2.1rem; font-weight: 800; font-variant-numeric: tabular-nums; letter-spacing: -.02em; }
+.tbar.paused .ttime { color: var(--muted); }
+.tbar.done .ttime { color: var(--ok); }
+.tbtns { display: flex; gap: 6px; padding: 6px 10px 10px; }
+.tbtns .btn { flex: 1; min-height: 44px; }
+.tbtns .btn .ic { width: 18px; height: 18px; }
+.chips.quick { margin: 8px 0 4px; }
+.trows .trow2 { display: flex; align-items: center; gap: 8px; padding: 6px 0; border-bottom: 1px solid var(--line); }
+.trows .trow2 span { flex: 1; min-width: 0; }
+.trows .trow2 small { color: var(--muted); }
+.prow .dur { min-width: 56px; font-variant-numeric: tabular-nums; font-weight: 700; border: 1px solid var(--line); border-radius: 10px; background: var(--surface-2); color: var(--text); min-height: 36px; font: inherit; cursor: pointer; }
+.prow .dur.def { color: var(--muted); font-weight: 500; }
+input[type="range"] { padding: 0; min-height: 36px; background: none; border: 0; accent-color: var(--primary); }

@@ -4,15 +4,16 @@ import * as store from './store.js';
 import { S } from './store.js';
 import {
   STATUS, DEFAULT_PROCEDURES, live, clientsList, sessionsList, sessionsOnDay, sessionsInRange, clientSessions,
-  sessionNumber, nextSessionOf, endOf, overlaps, proposeNext,
+  sessionNumber, nextSessionOf, endOf, overlaps, proposeNext, procTime, generalTime,
 } from './model.js';
 import {
   ZILE_SCURT, LUNI_SCURT, dateKey, parseKey, toLocal, fromLocal, addDays, startOfDay, startOfWeek, fmtTime, fmtDateLong,
-  fmtDateShort, fmtRelDay, capFirst, capName, norm, esc, uid, pad, plural, initials, timeAgo,
+  fmtDateShort, fmtRelDay, capFirst, capName, norm, esc, uid, pad, plural, initials, timeAgo, fmtDur, sayDur,
 } from './util.js';
 import { parseCommand, EXAMPLES } from './parser.js';
 import * as voice from './voice.js';
 import * as bio from './bio.js';
+import * as timer from './timer.js';
 import { icon, LOGO, toast, modal, closeAll, hasModal, confirmBox, formBox, choose } from './ui.js';
 
 const VERSION = '1.0.0';
@@ -49,6 +50,8 @@ async function boot() {
   registerSW();
   window.addEventListener('beforeinstallprompt', e => { e.preventDefault(); ui.installPrompt = e; });
   store.onChange(onStoreChange);
+  timer.onTimer(onTimerEvent);
+  $('#timer-root').addEventListener('click', onTimerClick);
   ['pointerdown', 'keydown'].forEach(ev => document.addEventListener(ev, () => { ui.lastActivity = Date.now(); }, true));
   document.addEventListener('visibilitychange', onVisibility);
   window.addEventListener('online', () => store.isUnlocked() && store.syncNow());
@@ -117,7 +120,7 @@ function onVisibility() {
     if (S.cfg?.pending) store.syncNow();
   } else {
     const lockMs = settings().autoLockMin * 60000;
-    if (ui.hiddenAt && Date.now() - ui.hiddenAt > lockMs) { doLock(); return; }
+    if (ui.hiddenAt && Date.now() - ui.hiddenAt > lockMs && !timer.T.active) { doLock(); return; }
     ui.lastActivity = Date.now();
     store.syncNow();
     if (ui.route?.name === 'agenda') rerender();
@@ -126,6 +129,7 @@ function onVisibility() {
 
 function tick() {
   if (!store.isUnlocked()) return;
+  if (timer.T.active) ui.lastActivity = Date.now();
   if (Date.now() - ui.lastActivity > settings().autoLockMin * 60000) { doLock(); return; }
   if (!document.hidden && S.cfg?.gh && Date.now() - (S.cfg.lastSync || 0) > 5 * 60000) store.syncNow();
   checkReminders();
@@ -281,6 +285,7 @@ async function busy(btn, label, fn, errEl) {
 
 async function doLock() {
   flushEdits();
+  timer.stop();
   await closeAll();
   await store.lock();
   ui.trail = [];
@@ -651,9 +656,10 @@ VIEWS.sedinta = id => {
       <div class="seg status">${Object.entries(STATUS).map(([k, v]) =>
         `<button data-act="s-status" data-v="${k}" class="${s.status === k ? 'on' : ''} st-${k}">${v}</button>`).join('')}</div>
     </section>
-    <section class="card">
-      <h2>Proceduri efectuate</h2>
-      <div class="chips">${procs.map(p => `<button class="chip ${s.procedures?.includes(p) ? 'on' : ''}" data-act="s-proc" data-v="${esc(p)}">${s.procedures?.includes(p) ? icon('check') : ''}${esc(p)}</button>`).join('')}</div>
+    <section class="card" id="steps">
+      <h2>${icon('timer')} Pași și pauze</h2>
+      <p class="small muted">Bifează pașii făcuți. Apasă ${icon('play', 'inl')} ca să pornești pauza de după pas; apasă pe timp ca să-l schimbi doar pentru ${esc(c.name.split(' ')[0])}.</p>
+      <div class="steps-list">${procs.map(p => stepRow(p, s, c)).join('')}</div>
       <div class="addrow"><input data-f="newproc" placeholder="Altă procedură…" enterkeyhint="done"><button class="btn" data-act="s-addproc">Adaugă</button></div>
     </section>
     <section class="card">
@@ -701,6 +707,18 @@ VIEWS.sedinta = id => {
 };
 
 const curSession = () => S.db.sessions[ui.route.id];
+
+function stepRow(p, s, c) {
+  const done = s.procedures?.includes(p);
+  const pt = procTime(settings(), c, p);
+  const running = timer.T.active && timer.T.meta.proc === p && timer.T.meta.sessionId === s.id;
+  return `<div class="step ${done ? 'on' : ''} ${running ? 'running' : ''}">
+    <button class="tick" data-act="s-proc" data-v="${esc(p)}" aria-pressed="${done}" aria-label="${done ? 'Debifează' : 'Bifează'} ${esc(p)}">${icon('check')}</button>
+    <button class="sname" data-act="s-proc" data-v="${esc(p)}">${esc(p)}</button>
+    <button class="dur ${pt.source === 'client' ? 'personal' : ''}" data-act="s-dur" data-v="${esc(p)}" aria-label="Pauza: ${sayDur(pt.seconds)}${pt.source === 'client' ? ', personalizată' : ''}">${fmtDur(pt.seconds)}</button>
+    <button class="play" data-act="t-start" data-v="${esc(p)}" aria-label="Pornește pauza pentru ${esc(p)}">${icon('play')}</button>
+  </div>`;
+}
 
 Object.assign(ACTIONS, {
   's-status': el => {
@@ -757,7 +775,181 @@ Object.assign(ACTIONS, {
     go(`#/agenda?d=${s.start.slice(0, 10)}&m=zi`);
   },
   dictate: el => dictateInto(el.dataset.v),
+  't-start': el => {
+    const s = curSession();
+    timer.unlockAudio();
+    startStep(el.dataset.v, { clientId: s.clientId, sessionId: s.id });
+  },
+  's-dur': async el => {
+    const s = curSession();
+    await editClientTime(s.clientId, el.dataset.v);
+    rerender();
+  },
 });
+
+// ====================================================================
+// Cronometrul pașilor
+// ====================================================================
+
+const spokenProc = p => p.replace(/\s*\(.*?\)\s*/g, ' ').trim();
+
+function soundOpts() {
+  const st = settings();
+  return { sound: st.alarmSound, volume: st.alarmVolume, vibrate: st.alarmVibrate };
+}
+
+function startStep(proc, { clientId = null, sessionId = null, seconds = null } = {}) {
+  const c = clientId ? client(clientId) : null;
+  const pt = procTime(settings(), c, proc);
+  const secs = seconds || pt.seconds;
+  const note = seconds ? 'durată aleasă acum' : pt.source === 'client' ? 'timp personalizat' : '';
+  timer.start({
+    seconds: secs,
+    label: proc,
+    sub: [c?.name, note].filter(Boolean).join(' · '),
+    meta: { proc, clientId, sessionId, seconds },
+  }, soundOpts());
+  // pasul pentru care pornește pauza a fost făcut: îl bifăm în ședință
+  const s = sessionId && S.db.sessions[sessionId];
+  if (live(s) && !s.procedures?.includes(proc)) {
+    flushEdits();
+    store.put('sessions', { ...s, procedures: [...(s.procedures || []), proc] });
+  }
+  if (ui.route?.name === 'sedinta') rerender();
+}
+
+function onTimerEvent(what) {
+  renderTimer(what === 'tick');
+  if (what === 'done') {
+    const { label, sub } = timer.T;
+    if (document.hidden && settings().notify && 'Notification' in window && Notification.permission === 'granted') {
+      navigator.serviceWorker?.ready.then(reg => reg.showNotification(`Pauza s-a terminat: ${spokenProc(label)}`, {
+        body: sub || 'Poți trece la pasul următor.', tag: 'cronometru', icon: 'icons/icon-192.png', badge: 'icons/badge-96.png', silent: true,
+      })).catch(() => {});
+    }
+  }
+  if (['start', 'stop'].includes(what) && ui.route?.name === 'sedinta') rerender();
+}
+
+function renderTimer(onlyTime = false) {
+  const root = $('#timer-root');
+  const T = timer.T;
+  const show = T.active && store.isUnlocked();
+  document.body.classList.toggle('has-timer', show);
+  if (!show) { root.innerHTML = ''; return; }
+  const left = timer.remaining();
+  if (onlyTime && root.firstElementChild) {
+    root.querySelector('.ttime').textContent = fmtDur(Math.ceil(left / 1000));
+    root.querySelector('.tprog i').style.width = `${100 - (left / T.total) * 100}%`;
+    return;
+  }
+  const state = T.done ? 'done' : T.paused ? 'paused' : 'running';
+  root.innerHTML = `<div class="tbar ${state}" role="timer" aria-live="off">
+    <div class="tprog"><i></i></div>
+    <div class="trow">
+      <div class="tinfo"><b>${T.done ? 'Gata: ' : ''}${esc(T.label)}</b><small>${esc(T.sub || (T.paused ? 'pe pauză' : 'pauză după pas'))}</small></div>
+      <div class="ttime">${fmtDur(Math.ceil(left / 1000))}</div>
+    </div>
+    <div class="tbtns">${T.done
+      ? `<button class="btn small" data-t="again">${icon('history')} Repetă</button>
+         <button class="btn small primary" data-t="stop">${icon('check')} Închide</button>`
+      : `<button class="btn small" data-t="minus" aria-label="Scade 30 de secunde">−30s</button>
+         <button class="btn small" data-t="toggle" aria-label="${T.paused ? 'Continuă' : 'Pauză'}">${icon(T.paused ? 'play' : 'pause')}</button>
+         <button class="btn small" data-t="plus" aria-label="Adaugă 30 de secunde">+30s</button>
+         <button class="btn small ghost" data-t="stop" aria-label="Oprește cronometrul">${icon('x')}</button>`}
+    </div></div>`;
+  root.querySelector('.tprog i').style.width = `${100 - (left / T.total) * 100}%`;
+}
+
+function onTimerClick(e) {
+  const b = e.target.closest('[data-t]');
+  if (!b) return;
+  ui.lastActivity = Date.now();
+  const a = b.dataset.t;
+  if (a === 'minus') timer.adjust(-30);
+  else if (a === 'plus') timer.adjust(30);
+  else if (a === 'toggle') timer.T.paused ? timer.resume() : timer.pause();
+  else if (a === 'stop') timer.stop();
+  else if (a === 'again') { const m = timer.T.meta; startStep(m.proc, m); }
+}
+
+// Clientul „din context”: ședința deschisă, fișa deschisă sau ședința care are loc acum
+function currentSessionOf(clientId) {
+  if (!clientId) return null;
+  const now = Date.now();
+  const today = sessionsOnDay(S.db, dateKey(new Date())).filter(s => s.clientId === clientId && s.status !== 'anulata');
+  return today.sort((a, b) => Math.abs(fromLocal(a.start) - now) - Math.abs(fromLocal(b.start) - now))[0] || null;
+}
+
+function contextClient() {
+  const r = ui.route;
+  if (r?.name === 'sedinta' && live(S.db.sessions[r.id])) return { clientId: S.db.sessions[r.id].clientId, sessionId: r.id };
+  if (r?.name === 'client' && live(client(r.id))) return { clientId: r.id, sessionId: currentSessionOf(r.id)?.id || null };
+  const now = Date.now();
+  const s = sessionsOnDay(S.db, dateKey(new Date())).find(x => x.status !== 'anulata'
+    && fromLocal(x.start).getTime() - 15 * 60000 <= now && endOf(x).getTime() + 30 * 60000 >= now);
+  return s ? { clientId: s.clientId, sessionId: s.id } : { clientId: null, sessionId: null };
+}
+
+function setClientTime(clientId, proc, secs) {
+  const c = client(clientId);
+  const timers = { ...(c.timers || {}) };
+  if (secs) timers[proc] = secs; else delete timers[proc];
+  store.put('clients', { ...c, timers });
+}
+
+function setGeneralTime(proc, secs) {
+  const timers = { ...(settings().timers || {}) };
+  if (secs) timers[proc] = secs; else delete timers[proc];
+  store.setSettings({ timers });
+}
+
+// Fereastră pentru alegerea unei durate. Întoarce secunde, 'reset' sau null.
+function durationBox({ title, text = '', seconds, resetLabel = '' }) {
+  return new Promise(resolve => {
+    let result = null;
+    const quick = [30, 60, 90, 120, 180, 240, 300];
+    const m = modal(`
+      <h2>${esc(title)}</h2>
+      ${text ? `<p class="small muted">${text}</p>` : ''}
+      <div class="chips quick">${quick.map(q => `<button class="chip ${q === seconds ? 'on' : ''}" data-act="q" data-v="${q}">${fmtDur(q)}</button>`).join('')}</div>
+      <div class="row2">
+        <label>Minute<input id="du-m" type="number" inputmode="numeric" min="0" max="60" value="${Math.floor(seconds / 60)}"></label>
+        <label>Secunde<input id="du-s" type="number" inputmode="numeric" min="0" max="59" step="5" value="${seconds % 60}"></label>
+      </div>
+      <p class="err" role="alert"></p>
+      <div class="btns"><button class="btn primary" data-act="ok">${icon('check')} Salvează</button><button class="btn" data-act="no">Renunță</button></div>
+      ${resetLabel ? `<button class="btn ghost small" data-act="reset">${esc(resetLabel)}</button>` : ''}`, {
+      onClose: () => resolve(result),
+      actions: {
+        q: el => { const v = Number(el.dataset.v); m.$('#du-m').value = Math.floor(v / 60); m.$('#du-s').value = v % 60; m.el.querySelectorAll('.quick .chip').forEach(c => c.classList.toggle('on', c === el)); },
+        ok: () => {
+          const sec = (Number(m.$('#du-m').value) || 0) * 60 + (Number(m.$('#du-s').value) || 0);
+          if (sec < 5 || sec > 3600) { m.$('.err').textContent = 'Alege o durată între 5 secunde și 60 de minute.'; return; }
+          result = sec;
+          m.close();
+        },
+        reset: () => { result = 'reset'; m.close(); },
+        no: () => m.close(),
+      },
+    });
+  });
+}
+
+async function editClientTime(clientId, proc) {
+  const c = client(clientId);
+  const pt = procTime(settings(), c, proc);
+  const g = generalTime(settings(), proc);
+  const v = await durationBox({
+    title: `Pauza după „${spokenProc(proc)}”`,
+    text: `Doar pentru <b>${esc(c.name)}</b>. Timpul general pentru această procedură este ${fmtDur(g)}.`,
+    seconds: pt.seconds,
+    resetLabel: pt.source === 'client' ? `Folosește timpul general (${fmtDur(g)})` : '',
+  });
+  if (v === null) return;
+  setClientTime(clientId, proc, v === 'reset' ? null : v);
+  toast(v === 'reset' ? `${c.name}: „${spokenProc(proc)}” folosește din nou timpul general.` : `${c.name}: pauza după „${spokenProc(proc)}” este ${sayDur(v)}.`);
+}
 
 function newSession(clientId, start) {
   return store.put('sessions', {
@@ -995,6 +1187,11 @@ VIEWS.client = id => {
       ${textField('reason', 'Motivul pentru care a venit', c.reason)}
       ${textField('notes', 'Notițe generale (istoric, contraindicații)', c.notes)}
     </section>
+    <section class="card">
+      <h2>${icon('timer')} Pauze doar pentru ${esc(c.name.split(' ')[0])}</h2>
+      ${clientTimersHtml(c)}
+      <button class="btn" data-act="c-addtime">${icon('plus')} Pauză personalizată</button>
+    </section>
     <h2 class="sec">Ședințe ${list.length ? `(${list.length})` : ''}</h2>
     <div class="list">${list.length ? list.map(historyCard).join('') : '<p class="muted center">Nicio ședință încă.</p>'}</div>
     <section class="actions"><button class="btn danger ghost" data-act="c-del">${icon('trash')} Șterge clientul</button></section>`;
@@ -1022,6 +1219,37 @@ function historyCard(s) {
       <div class="meta">${n ? `Ședința nr. ${n}` : ''} ${statusPill(s)}</div>${bits.join('')}</div>
     ${icon('right', 'chev')}</a>`;
 }
+
+function clientTimersHtml(c) {
+  const entries = Object.entries(c.timers || {}).filter(([, v]) => v > 0);
+  if (!entries.length) return '<p class="small muted">Folosește timpii generali pentru toate procedurile. Poți pune alt timp doar pentru acest client, la orice procedură.</p>';
+  return `<p class="small muted">Celelalte proceduri folosesc timpii generali din Setări.</p>
+    <div class="trows">${entries.map(([p, v]) => `<div class="trow2">
+      <span>${esc(p)}<br><small>general: ${fmtDur(generalTime(settings(), p))}</small></span>
+      <button class="btn small" data-act="c-edittime" data-v="${esc(p)}">${fmtDur(v)}</button>
+      <button class="icon-btn small" data-act="c-deltime" data-v="${esc(p)}" aria-label="Folosește timpul general pentru ${esc(p)}">${icon('x')}</button>
+    </div>`).join('')}</div>`;
+}
+
+Object.assign(ACTIONS, {
+  'c-addtime': async () => {
+    const c = client(ui.route.id);
+    const p = await choose('Pentru ce procedură?', settings().procedures.map(n => {
+      const pt = procTime(settings(), c, n);
+      return { label: n, sub: `${fmtDur(pt.seconds)}${pt.source === 'client' ? ' (personalizat)' : ''}`, value: n };
+    }));
+    if (!p) return;
+    await editClientTime(c.id, p);
+    rerender();
+  },
+  'c-edittime': async el => { await editClientTime(ui.route.id, el.dataset.v); rerender(); },
+  'c-deltime': el => {
+    const c = client(ui.route.id);
+    setClientTime(c.id, el.dataset.v, null);
+    toast(`„${spokenProc(el.dataset.v)}” folosește din nou timpul general.`);
+    rerender();
+  },
+});
 
 ACTIONS['c-del'] = async () => {
   const c = client(ui.route.id);
@@ -1144,10 +1372,24 @@ VIEWS.setari = (id, q) => {
       <label class="check"><input type="checkbox" data-f="speak" ${st.speak ? 'checked' : ''}> Răspunde cu voce</label>
       <a class="btn" href="#/ajutor">${icon('help')} Ce comenzi pot spune?</a>
     </section>
+    <section class="card form">
+      <h2>${icon('timer')} Cronometru și sunet</h2>
+      <p class="small muted">După fiecare pas pornești din ședință o pauză cu numărătoare inversă. La final se aude un sunet blând.</p>
+      <label>Pauza obișnuită (pentru procedurile fără timp propriu)
+        <div class="stepper"><button class="btn" data-act="st-tdef" data-v="-15">−</button><b id="tdef">${fmtDur(st.timerDefault)}</b><button class="btn" data-act="st-tdef" data-v="15">+</button></div></label>
+      <label>Sunetul de la final<select data-f="alarmSound">
+        <option value="bol" ${st.alarmSound === 'bol' ? 'selected' : ''}>Bol tibetan (jos, se stinge încet)</option>
+        <option value="clopotel" ${st.alarmSound === 'clopotel' ? 'selected' : ''}>Clopoțel (trei note moi)</option></select></label>
+      <label>Volumul<input type="range" data-f="alarmVolume" min="5" max="100" step="5" value="${st.alarmVolume}"></label>
+      <label class="check"><input type="checkbox" data-f="alarmVibrate" ${st.alarmVibrate ? 'checked' : ''}> Vibrează la final</label>
+      <button class="btn" data-act="st-tsound">${icon('volume')} Ascultă sunetul</button>
+      <p class="small muted">Cât timp merge cronometrul, ecranul telefonului rămâne aprins.</p>
+    </section>
     <section class="card">
       <h2>Lista de proceduri</h2>
-      <p class="small muted">Apar ca butoane în fiecare ședință.</p>
+      <p class="small muted">Apar ca pași în fiecare ședință. Timpul de lângă fiecare este pauza generală după acel pas; apasă pe el ca să-l schimbi. La un client anume poți pune alt timp din fișa lui.</p>
       <div class="plist">${st.procedures.map((p, i) => `<div class="prow"><span>${esc(p)}</span>
+        <button class="dur ${st.timers?.[p] ? '' : 'def'}" data-act="st-ptime" data-v="${i}" aria-label="Pauza după ${esc(p)}: ${sayDur(generalTime(st, p))}">${fmtDur(generalTime(st, p))}</button>
         <button class="icon-btn small" data-act="st-pup" data-v="${i}" aria-label="Mută mai sus" ${i === 0 ? 'disabled' : ''}>↑</button>
         <button class="icon-btn small" data-act="st-pdel" data-v="${i}" aria-label="Scoate">${icon('x')}</button></div>`).join('')}</div>
       <div class="addrow"><input id="st-newproc" placeholder="Procedură nouă…" enterkeyhint="done"><button class="btn" data-act="st-padd">Adaugă</button></div>
@@ -1176,7 +1418,13 @@ VIEWS.setari = (id, q) => {
     title: 'Setări', html, tab: 'setari',
     onInput: async e => {
       const f = e.target.dataset.f;
-      if (e.type !== 'change' && e.target.tagName !== 'SELECT') return;
+      if (e.type !== 'change') return;
+      if (f === 'alarmVolume') {
+        if (e.type === 'change') { store.setSettings({ alarmVolume: Number(e.target.value) }); timer.preview({ sound: settings().alarmSound, volume: Number(e.target.value) }); }
+        return;
+      }
+      if (f === 'alarmVibrate') { store.setSettings({ alarmVibrate: e.target.checked }); return; }
+      if (f === 'alarmSound') { store.setSettings({ alarmSound: e.target.value }); timer.preview({ sound: e.target.value, volume: settings().alarmVolume }); return; }
       if (f === 'duration' || f === 'reminderMin' || f === 'autoLockMin') store.setSettings({ [f]: Number(e.target.value) });
       else if (f === 'calTitle') store.setSettings({ calTitle: e.target.value });
       else if (f === 'speak') store.setSettings({ speak: e.target.checked });
@@ -1367,6 +1615,24 @@ Object.assign(ACTIONS, {
     store.setSettings({ workDays: next });
     rerender();
   },
+  'st-tdef': el => {
+    const v = Math.min(1800, Math.max(15, settings().timerDefault + Number(el.dataset.v)));
+    store.setSettings({ timerDefault: v });
+    $('#tdef').textContent = fmtDur(v);
+  },
+  'st-tsound': () => timer.preview({ sound: settings().alarmSound, volume: settings().alarmVolume }),
+  'st-ptime': async el => {
+    const p = settings().procedures[Number(el.dataset.v)];
+    const v = await durationBox({
+      title: `Pauza după „${spokenProc(p)}”`,
+      text: 'Pentru toți clienții, în afară de cei care au un timp personalizat pentru această procedură.',
+      seconds: generalTime(settings(), p),
+      resetLabel: settings().timers?.[p] ? `Folosește pauza obișnuită (${fmtDur(settings().timerDefault)})` : '',
+    });
+    if (v === null) return;
+    setGeneralTime(p, v === 'reset' ? null : v);
+    rerender();
+  },
   'st-padd': () => {
     const inp = $('#st-newproc');
     const p = inp.value.trim();
@@ -1466,6 +1732,11 @@ VIEWS.ajutor = (id, q) => {
       <p class="small muted">Nota merge la ședința de azi a clientului (sau la ultima lui ședință). Cuvintele „reacții”, „starea după” și „proceduri” aleg câmpul; altfel merge la „Alte notițe”.</p>
       <h3>Mutări și anulări</h3>
       ${ex(['Mută ședința de la ora 15 pe joi', 'Mută ședința Mariei pe vineri la 11', 'Amână ședința lui Ion cu o zi', 'Anulează ședința de mâine a lui Ion'])}
+      <h3>Cronometrul pașilor</h3>
+      ${ex(['Pornește cronometrul pentru gât', 'Start genunchi', 'Oprește cronometrul'])}
+      <p class="small muted">Dacă o ședință e deschisă (sau are loc chiar acum), se folosesc timpii clientului ei.</p>
+      ${ex(['Setează la Maria pentru gât 3 minute', 'La Ion pentru coccis un minut și jumătate', 'La Maria toate procedurile 3 minute', 'La Ion pentru coccis timpul obișnuit', 'Timpul general pentru umăr să fie 2 minute', 'Cât timp are Maria la gât?'])}
+      <p class="small muted">Cu numele clientului, timpul se schimbă doar pentru el. Cu „general” sau „pentru toți clienții”, se schimbă pentru toți cei care nu au timp personalizat.</p>
       <h3>Altele</h3>
       ${ex(['Deschide fișa Mariei', 'Ajutor'])}
       <p class="small muted">Recunoașterea vocii are nevoie de internet. În câmpurile de text poți dicta și cu butonul mic de microfon de lângă fiecare câmp.</p>
@@ -1543,12 +1814,14 @@ function voiceCtx() {
   return {
     now: new Date(),
     clients: clientsList(S.db).map(({ id, name }) => ({ id, name })),
+    procedures: settings().procedures,
     sessions: sessionsList(S.db).map(({ id, clientId, start, status }) => ({ id, clientId, start, status })),
   };
 }
 
 function startVoice() {
   flushEdits();
+  timer.unlockAudio();
   let rec = null;
   let listening = false;
   const m = modal(`
@@ -1720,6 +1993,116 @@ function withUndo(msg, records, fn) {
 const FIELD_LABEL = { reactions: 'Reacții în timpul ședinței', after: 'Starea după ședință', notes: 'Alte notițe', procedures: 'Proceduri efectuate' };
 
 const INTENTS = {
+  async timer(r, v) {
+    const st = settings();
+    if (r.action === 'stop') {
+      if (timer.T.active) { timer.stop(); v.say('Am oprit cronometrul.'); } else v.say('Nu merge niciun cronometru.');
+      await v.m.close();
+      return;
+    }
+    let procs = r.allProcs ? [...st.procedures] : [...r.procs];
+    if (!procs.length && r.procChoices.length) {
+      v.say('Care procedură?');
+      const p = await pickIn(v, 'Care procedură?', r.procChoices.map(n => ({ label: n, value: n })));
+      if (!p) return;
+      procs = [p];
+    }
+    const here = contextClient();
+    let clientId = null;
+    if (r.exact.length || r.partial.length || r.clientQuery) {
+      const who = await resolveClient(r, v, { allowNew: false });
+      if (!who) return;
+      clientId = who.id;
+    } else if (!r.general) clientId = here.clientId;
+    const c = clientId ? client(clientId) : null;
+
+    if (r.action === 'start') {
+      if (!procs.length) {
+        v.say('Pentru ce procedură?');
+        const p = await pickIn(v, 'Pentru ce procedură?', st.procedures.map(n => ({ label: n, sub: fmtDur(procTime(st, c, n).seconds), value: n })));
+        if (!p) return;
+        procs = [p];
+      }
+      const sessionId = clientId === here.clientId ? here.sessionId : currentSessionOf(clientId)?.id || null;
+      const secs = r.seconds || procTime(st, c, procs[0]).seconds;
+      v.say(`Pornesc ${sayDur(secs)} pentru ${spokenProc(procs[0])}.`);
+      startStep(procs[0], { clientId, sessionId, seconds: r.seconds });
+      await v.m.close();
+      return;
+    }
+
+    if (!procs.length) {
+      v.status('Nu am înțeles pentru ce procedură. Spune, de exemplu: „la Maria pentru gât 3 minute”.');
+      v.say('Nu am înțeles pentru ce procedură.');
+      return;
+    }
+
+    if (r.action === 'query') {
+      const lines = procs.map(p => {
+        const pt = procTime(st, c, p);
+        return `${spokenProc(p)}: ${sayDur(pt.seconds)}${pt.source === 'client' ? ' (personalizat)' : ''}`;
+      });
+      const text = `${c ? c.name : 'În general'}: ${lines.join(', ')}.`;
+      v.say(text);
+      v.body(`<p class="answer">${esc(text)}</p>`);
+      return;
+    }
+
+    if (r.action === 'reset') {
+      if (!c) { v.status('Spune pentru ce client, de exemplu: „la Ion pentru coccis timpul obișnuit”.'); return; }
+      const list = procs.filter(p => c.timers?.[p]);
+      if (!list.length) { const t = `${c.name} folosește deja timpii generali pentru ${procs.map(spokenProc).join(', ')}.`; v.say(t); v.body(`<p class="answer">${esc(t)}</p>`); return; }
+      v.say(`${c.name} revine la timpul general pentru ${list.map(spokenProc).join(', ')}. Confirmi?`);
+      confirmIn(v, `<h3>Revin la timpul general</h3><p><b>${esc(c.name)}</b></p>
+        <ul class="examples">${list.map(p => `<li>${esc(p)}: ${fmtDur(c.timers[p])} → ${fmtDur(generalTime(st, p))}</li>`).join('')}</ul>`, {
+        onOk: async () => {
+          withUndo('Am revenit la timpii generali.', [['clients', c.id]], () => { list.forEach(p => setClientTime(c.id, p, null)); });
+          v.say('Gata.');
+          await v.m.close();
+          if (ui.route?.name === 'sedinta' || ui.route?.name === 'client') rerender();
+        },
+      });
+      return;
+    }
+
+    // setare: pentru un client sau pentru toți
+    const secs = r.seconds || procTime(st, c, procs[0]).seconds;
+    const scopeOpts = [
+      ...(c ? [`<option value="client" ${r.general ? '' : 'selected'}>doar pentru ${esc(c.name)}</option>`] : []),
+      `<option value="general" ${r.general || !c ? 'selected' : ''}>pentru toți clienții (timpul general)</option>`,
+    ].join('');
+    const who = c && !r.general ? `la ${c.name}` : 'pentru toți';
+    v.say(`Pun ${sayDur(secs)} ${who}, pentru ${procs.length > 3 ? 'toate procedurile' : procs.map(spokenProc).join(', ')}. Confirmi?`);
+    confirmIn(v, `
+      <h3>Pauza după pas</h3>
+      <p class="small">${procs.length > 3 ? `Toate procedurile (${procs.length})` : procs.map(p => {
+        const pt = procTime(st, c, p);
+        return `<b>${esc(p)}</b> <span class="muted">acum ${fmtDur(pt.seconds)}${pt.source === 'client' ? ', personalizat' : ''}</span>`;
+      }).join('<br>')}</p>
+      <label>Pentru cine<select id="vt-scope">${scopeOpts}</select></label>
+      <div class="row2">
+        <label>Minute<input id="vt-m" type="number" inputmode="numeric" min="0" max="60" value="${Math.floor(secs / 60)}"></label>
+        <label>Secunde<input id="vt-s" type="number" inputmode="numeric" min="0" max="59" step="5" value="${secs % 60}"></label>
+      </div>`, {
+      ok: 'Salvează',
+      onOk: async el => {
+        const sec = (Number(el.querySelector('#vt-m').value) || 0) * 60 + (Number(el.querySelector('#vt-s').value) || 0);
+        if (sec < 5 || sec > 3600) { v.status('Alege o durată între 5 secunde și 60 de minute.'); return false; }
+        const scope = el.querySelector('#vt-scope').value;
+        if (scope === 'client') {
+          withUndo(`${c.name}: pauza este ${sayDur(sec)}.`, [['clients', c.id]], () => { procs.forEach(p => setClientTime(c.id, p, sec)); });
+        } else {
+          const before = structuredClone(settings().timers || {});
+          procs.forEach(p => setGeneralTime(p, sec));
+          toast(`Timpul general este ${sayDur(sec)}.`, { action: 'Anulează', ms: 8000, onAction: () => { store.setSettings({ timers: before }); rerender(); } });
+        }
+        v.say('Am salvat.');
+        await v.m.close();
+        rerender();
+      },
+    });
+  },
+
   unknown(r, v) {
     v.status('Nu am înțeles comanda.');
     v.say('Nu am înțeles. Încearcă din nou.');

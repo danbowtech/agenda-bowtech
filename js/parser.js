@@ -73,7 +73,7 @@ function numberize(toks) {
     let n = wordNum(t);
     if (n != null && AMBIGUOUS_NUM.has(t)) {
       const prev = toks[i - 1]?.t, next = toks[i + 1]?.t;
-      if (!NUM_CONTEXT.has(prev) && !(next in MONTHS) && next !== 'si' && next !== 'fara') n = undefined;
+      if (!NUM_CONTEXT.has(prev) && !(next in MONTHS) && next !== 'si' && next !== 'fara' && !UNIT_MIN.has(next) && !UNIT_SEC.has(next)) n = undefined;
     }
     if (n != null && TENS[t] && toks[i + 1]?.t === 'si' && UNITS[toks[i + 2]?.t]) {
       n += UNITS[toks[i + 2].t];
@@ -371,6 +371,9 @@ export function parseCommand(text, ctx) {
   const out = { text: String(text).trim() };
   if (!T.length) return { ...out, type: 'unknown' };
 
+  const timer = parseTimer(T, orig, ctx);
+  if (timer) return { ...out, type: 'timer', ...timer };
+
   const found = detectIntent(T);
   let intent = found?.intent;
   const at = found ? found.at + 1 : 0;
@@ -498,6 +501,211 @@ export function parseCommand(text, ctx) {
   return { ...out, type: 'unknown' };
 }
 
+// ---------- cronometrul pașilor ----------
+
+const UNIT_MIN = new Set(['minut', 'minute', 'min', 'minutul', 'minutele']);
+const UNIT_SEC = new Set(['secunda', 'secunde', 'sec', 'secundele']);
+const TIMER_WORDS = new Set(['cronometru', 'cronometrul', 'cronometre', 'cronometrele', 'numaratoare', 'numaratoarea',
+  'countdown', 'pauza', 'pauzei', 'pauzele', 'timp', 'timpul', 'timpi', 'timpii', 'alarma', 'alarmei', 'timer', 'timerul',
+  'temporizator', 'temporizatorul']);
+const START_WORDS = new Set(['porneste', 'pornesti', 'pornim', 'pornește', 'start', 'starteaza', 'incepe', 'incepem']);
+const STOP_WORDS = new Set(['opreste', 'oprim', 'stop', 'opresti']);
+const RESET_WORDS = new Set(['obisnuit', 'obisnuita', 'normal', 'normala', 'implicit', 'implicita', 'standard', 'general', 'generala']);
+const ALL_WORDS = new Set(['toti', 'toate', 'toata', 'tuturor', 'fiecare']);
+const EVERYONE = new Set(['clientii', 'pacientii', 'lumea', 'clientilor', 'pacientilor', 'clientele', 'pacientele']);
+const ALL_PROCS = new Set(['procedurile', 'procedurilor', 'pasii', 'pasilor', 'miscarile', 'procedura', 'pasul']);
+const TIMER_FILLER = new Set([...FILLER, ...TIMER_WORDS, ...START_WORDS, ...STOP_WORDS, ...RESET_WORDS, ...ALL_WORDS,
+  ...EVERYONE, ...ALL_PROCS, ...UNIT_MIN, ...UNIT_SEC,
+  'seteaza', 'setez', 'setati', 'setam', 'pune', 'puneti', 'punem', 'schimba', 'schimbati', 'modifica', 'fa', 'fii', 'fie',
+  'procedurii', 'pasului', 'pacientul', 'pacienta', 'pacientului', 'pacientei', 'personalizat', 'personalizata',
+  'drumul', 'da', 'cat', 'cate', 'cit', 'dureaza', 'durata', 'sterge', 'stergeti', 'revino', 'reveni', 'foloseste',
+  'folosim', 'foloseasca', 'reseteaza', 'anuleaza', 'jumatate', 'tot', 'iar', 'aceeasi', 'acelasi', 'lui', 'ei', 'clienta',
+  'client', 'clientul', 'clientului', 'clientei', 'si', 'iti', 'vreau', 'ce', 'care']);
+const PROC_STOP = new Set(['de', 'baza', 'relaxare', 'zona', 'si', 'a', 'la', 'cu']);
+
+// „2 minute”, „un minut și jumătate”, „90 de secunde”, „2 minute și 30 de secunde”, „2:30”
+function matchDuration(T, i) {
+  const hm = /^(\d{1,2})h(\d{2})$/.exec(T[i]?.t || '');
+  if (hm) return { start: i, end: i + 1, seconds: Number(hm[1]) * 60 + Number(hm[2]) };
+  if (T[i]?.t === 'jumatate' && T[i + 1]?.t === 'de' && UNIT_MIN.has(T[i + 2]?.t)) return { start: i, end: i + 3, seconds: 30 };
+  const n = countWord(T[i]);
+  if (n == null) return null;
+  let j = i + 1;
+  if (T[j]?.t === 'de') j++;
+  let half = false;
+  if (T[j]?.t === 'si' && T[j + 1]?.t === 'jumatate' && UNIT_MIN.has(T[j + 2]?.t)) { half = true; j += 2; }
+  if (UNIT_MIN.has(T[j]?.t)) {
+    let sec = n * 60 + (half ? 30 : 0);
+    j++;
+    if (!half && T[j]?.t === 'si' && T[j + 1]?.t === 'jumatate') { sec += 30; j += 2; }
+    else {
+      let k = j;
+      if (T[k]?.t === 'si') k++;
+      const s2 = T[k]?.n;
+      if (s2 != null && s2 < 60) {
+        k++;
+        if (T[k]?.t === 'de') k++;
+        if (UNIT_SEC.has(T[k]?.t)) k++;
+        sec += s2;
+        j = k;
+      }
+    }
+    return { start: i, end: j, seconds: sec };
+  }
+  if (UNIT_SEC.has(T[j]?.t)) return { start: i, end: j + 1, seconds: n };
+  return null;
+}
+
+function procWords(name) {
+  return norm(String(name).replace(/\(([^)]*)\)/g, (m, x) => ` ${x.replace(/\s+/g, '')} `))
+    .split(' ').filter(w => w && !PROC_STOP.has(w));
+}
+
+function procTokMatch(tok, w) {
+  if (tokMatch(tok, w)) return true;
+  // forme ca „gâtului”, „umărului”, „genunchii”
+  if (w.length >= 3 && tok.startsWith(w) && tok.length - w.length <= 4) return true;
+  if (tok.length >= 4 && w.startsWith(tok)) return true;
+  return false;
+}
+
+// Cât de bine se potrivesc cuvintele spuse cu numele procedurii
+function scoreProc(words, name) {
+  const pw = procWords(name);
+  const used = new Set();
+  let matched = 0;
+  for (const w of words) {
+    const k = pw.findIndex((x, i) => !used.has(i) && procTokMatch(w, x));
+    if (k >= 0) { used.add(k); matched++; }
+  }
+  return matched;
+}
+
+function bestProcs(words, procedures) {
+  if (!words.length) return { score: 0, names: [] };
+  let best = 0, names = [];
+  for (const p of procedures) {
+    const sc = scoreProc(words, p);
+    if (sc > best) { best = sc; names = [p]; }
+    else if (sc === best && sc > 0) names.push(p);
+  }
+  return { score: best, names };
+}
+
+// „b r m 3” / „brm 3” -> „brm3”
+function joinBrm(T) {
+  const out = [];
+  for (let i = 0; i < T.length; i++) {
+    if (T[i].t === 'b' && T[i + 1]?.t === 'r' && T[i + 2]?.t === 'm') { out.push({ t: 'brm', o: T[i].o }); i += 2; continue; }
+    out.push(T[i]);
+  }
+  const res = [];
+  for (let i = 0; i < out.length; i++) {
+    if (out[i].t === 'brm' && out[i + 1]?.n != null) { res.push({ t: `brm${out[i + 1].n}`, o: out[i].o }); i++; continue; }
+    res.push(out[i]);
+  }
+  return res;
+}
+
+function parseTimer(T0, orig, ctx) {
+  const procedures = ctx.procedures || [];
+  const T = joinBrm(T0);
+  const words = T.map(x => x.t);
+  const hasTimerWord = words.some(w => TIMER_WORDS.has(w));
+  const hasUnit = words.some(w => UNIT_MIN.has(w) || UNIT_SEC.has(w));
+  const startWord = words.some(w => START_WORDS.has(w)) || (words.includes('da') && words.includes('drumul'));
+  const verb = detectIntent(T0)?.intent;
+
+  if (STOP_WORDS.has(words[0]) && words.length <= 3) return { action: 'stop' };
+  if (!hasTimerWord && !hasUnit && !startWord) {
+    // „la Ion pentru genunchi 2:30”: fără verb, dar cu o procedură și un număr
+    const procHit = T.some(x => !FILLER.has(x.t) && bestProcs([x.t], procedures).score > 0);
+    const num = T.some(x => x.n != null || /^\d{1,2}h\d{2}$/.test(x.t));
+    if (verb || !procHit || !num) return null;
+  }
+  if (verb === 'note') return null;
+  if (!hasTimerWord && ['schedule', 'move', 'cancel', 'query', 'when', 'open'].includes(verb)) return null;
+  if (hasTimerWord && (words.some(w => STOP_WORDS.has(w)) || (words.includes('anuleaza') && !words.includes('personalizat')))) return { action: 'stop' };
+
+  // durata
+  let seconds = null;
+  const consumed = new Set();
+  for (let i = 0; i < T.length; i++) {
+    const d = matchDuration(T, i);
+    if (d) { seconds = d.seconds; for (let k = d.start; k < d.end; k++) consumed.add(k); break; }
+  }
+
+  const general = words.some((w, i) => ALL_WORDS.has(w) && EVERYONE.has(words[i + 1]))
+    || (seconds != null && words.some(w => ['general', 'generala', 'implicit', 'implicita'].includes(w)));
+  const allProcs = words.some((w, i) => ALL_WORDS.has(w) && ALL_PROCS.has(words[i + 1]));
+
+  // grupuri de cuvinte rămase: fie client, fie procedură
+  const runs = [];
+  let run = [];
+  for (let k = 0; k < T.length; k++) {
+    const bad = consumed.has(k) || TIMER_FILLER.has(T[k].t) || (T[k].n != null && !T[k].t.startsWith('brm'));
+    if (bad) { if (run.length) runs.push(run); run = []; } else run.push(k);
+  }
+  if (run.length) runs.push(run);
+
+  let client = null;
+  const procs = [];
+  let procChoices = [];
+  for (const r of runs) {
+    const ws = r.map(k => T[k].t);
+    let best = null;
+    for (let cut = 0; cut <= ws.length; cut++) {
+      for (const clientFirst of [true, false]) {
+        const cw = clientFirst ? ws.slice(0, cut) : ws.slice(ws.length - cut);
+        const pw = clientFirst ? ws.slice(cut) : ws.slice(0, ws.length - cut);
+        const cm = cw.length ? matchClients(cw, ctx.clients) : { exact: [], partial: [] };
+        if (cw.length && !cm.exact.length) continue;
+        const pm = bestProcs(pw, procedures);
+        if (pw.length && !pm.score) continue;
+        const score = cw.length * 2 + pm.score * 2 - (pw.length - pm.score);
+        if (!best || score > best.score) best = { score, cw, cm, pm, cIdx: clientFirst ? r.slice(0, cut) : r.slice(r.length - cut) };
+      }
+    }
+    if (!best) {
+      // cuvinte necunoscute: poate un client nou sau un nume greșit
+      if (!client) client = { exact: [], partial: matchClients(ws, ctx.clients).partial, query: capName(origWords(orig, T, r)) };
+      continue;
+    }
+    if (best.cw.length && !client?.exact?.length) client = { ...best.cm, query: capName(origWords(orig, T, best.cIdx)) };
+    if (best.pm.names.length === 1) { if (!procs.includes(best.pm.names[0])) procs.push(best.pm.names[0]); }
+    else if (best.pm.names.length > 1) procChoices = best.pm.names;
+  }
+
+  // „la gât 3” – un număr fără unitate înseamnă minute
+  if (seconds == null && !startWord) {
+    const lone = T.find(x => x.n != null && !x.t.startsWith('brm') && x.n > 0 && x.n <= 30);
+    if (lone) seconds = lone.n * 60;
+  }
+
+  const question = ['cat', 'cate', 'cit', 'ce', 'care'].includes(words[0]);
+  let action;
+  if (question) action = 'query';
+  else if (startWord) action = 'start';
+  else if (seconds == null && (words.some(w => RESET_WORDS.has(w)) || words.includes('personalizat'))) action = 'reset';
+  else if (seconds != null) action = 'set';
+  else if (!hasTimerWord) return null;
+  else action = 'set';
+
+  if (!procs.length && !procChoices.length && !allProcs && action !== 'start' && !hasTimerWord && !client?.exact?.length) return null;
+
+  return {
+    action,
+    seconds,
+    general: general && !client?.exact?.length,
+    allProcs,
+    procs,
+    procChoices,
+    exact: client?.exact || [],
+    partial: client?.partial || [],
+    clientQuery: client?.query || null,
+  };
+}
+
 export const EXAMPLES = [
   'Programează-o pe Maria Popescu marți la ora 10',
   'Programează-l pe Ion Ionescu mâine la 3 și jumătate',
@@ -513,4 +721,9 @@ export const EXAMPLES = [
   'Amână ședința lui Ion cu o zi',
   'Anulează ședința de mâine a lui Ion',
   'Deschide fișa Mariei',
+  'Pornește cronometrul pentru gât',
+  'Setează la Maria pentru gât 3 minute',
+  'Timpul general pentru umăr să fie 2 minute și jumătate',
+  'La Ion pentru coccis timpul obișnuit',
+  'Oprește cronometrul',
 ];

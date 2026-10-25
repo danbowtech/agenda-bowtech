@@ -155,3 +155,22 @@ export function timeAgo(ts, now = Date.now()) {
   const d = Math.round(h / 24);
   return d === 1 ? 'ieri' : `acum ${d} zile`;
 }
+
+// 150 -> '2:30'
+export function fmtDur(sec) {
+  sec = Math.max(0, Math.round(sec));
+  return `${Math.floor(sec / 60)}:${pad(sec % 60)}`;
+}
+
+// 150 -> „2 minute și jumătate” (pentru citit cu voce și pentru texte)
+export function sayDur(sec) {
+  sec = Math.round(sec);
+  const m = Math.floor(sec / 60), s = sec % 60;
+  const de = n => (n % 100 >= 20 || (n % 100 === 0 && n > 0)) ? 'de ' : '';
+  const min = m === 1 ? 'un minut' : `${m} ${de(m)}minute`;
+  const secs = s === 1 ? 'o secundă' : `${s} ${de(s)}secunde`;
+  if (!m) return secs;
+  if (!s) return min;
+  if (s === 30) return `${min} și jumătate`;
+  return `${min} și ${secs}`;
+}
